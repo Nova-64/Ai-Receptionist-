@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { createBooking } = require("./calendar"); // Make sure this points to your calendar module
+const { createBooking } = require("./googlecalendar");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
