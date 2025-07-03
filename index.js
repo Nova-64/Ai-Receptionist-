@@ -88,7 +88,7 @@ app.post("/process", async (req, res) => {
       ? transcriptionResult
       : transcriptionResult.text;
 
-    fs.unlink(tempPath, () => {});
+    fs.unlink(tempPath, () => {}); // clean up
 
     const isSilence =
       !userInput ||
@@ -119,19 +119,28 @@ app.post("/process", async (req, res) => {
     twiml.say({ voice: "Polly.Joanna" }, reply);
     twiml.pause({ length: 1 });
 
-    const isExpectingReply = /\b(please (provide|share|tell)|what (date|time|service|name)|may I have|could you tell|when would you like|which service)/i.test(reply);
-    const isBookingSuccess = /\b(appointment (has been|is) booked|you(?:'|’)re all set|your appointment is confirmed|confirmation (email|link) sent)/i.test(reply);
-    const isGeneralAnswer = !isExpectingReply && !isBookingSuccess;
+    const isBookingPrompt = /\b(please (provide|share|tell)|what (date|time|service|name)|may I have|could you tell|when would you like|which service)/i.test(reply);
+    const isBookingConfirmed = /\b(appointment (has been|is) booked|you(?:'|’)re all set|your appointment is confirmed|confirmation (email|link) sent)/i.test(reply);
 
-    if (isExpectingReply) {
+    if (isBookingPrompt) {
+      // Booking in progress: just record, no follow-up prompt
       twiml.record({
         maxLength: 20,
         action: "/process",
         transcribe: false,
         finishOnKey: "#"
       });
-    } else if (isBookingSuccess || isGeneralAnswer) {
+    } else if (isBookingConfirmed) {
+      // Booking complete: offer polite follow-up prompt
       twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
+      twiml.record({
+        maxLength: 20,
+        action: "/process",
+        transcribe: false,
+        finishOnKey: "#"
+      });
+    } else {
+      // Regular info response: just record, caller stays in control
       twiml.record({
         maxLength: 20,
         action: "/process",
