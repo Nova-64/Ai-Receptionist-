@@ -113,18 +113,30 @@ app.post("/process", async (req, res) => {
     });
 
     let reply = chatResponse.choices[0].message.content || "";
-    reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').replace(/\n/g, ' ').trim();
+    reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, "").replace(/\n/g, " ").trim();
 
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say({ voice: 'Polly.Joanna' }, reply);
+    twiml.say({ voice: "Polly.Joanna" }, reply);
     twiml.pause({ length: 1 });
-    twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
-    twiml.record({
-      maxLength: 20,
-      action: "/process",
-      transcribe: false,
-      finishOnKey: "#"
-    });
+
+    const isExpectingReply = /\b(please (provide|share|tell)|what (date|time|service|name)|may I have|could you tell|when would you like|which service)/i.test(reply);
+
+    if (isExpectingReply) {
+      twiml.record({
+        maxLength: 20,
+        action: "/process",
+        transcribe: false,
+        finishOnKey: "#"
+      });
+    } else {
+      twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
+      twiml.record({
+        maxLength: 20,
+        action: "/process",
+        transcribe: false,
+        finishOnKey: "#"
+      });
+    }
 
     res.type("text/xml");
     res.send(twiml.toString());
@@ -142,6 +154,3 @@ const port = process.env.PORT || 5000;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
 });
-
-
-
