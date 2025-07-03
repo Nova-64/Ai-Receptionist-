@@ -14,6 +14,8 @@ app.use(bodyParser.json());
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const sessions = {}; // 📌 CallSid-based session memory
+
 const salonInfo = `
 You are an AI receptionist for Nova Salon.
 
@@ -60,6 +62,7 @@ app.post("/voice", async (req, res) => {
 
 app.post("/process", async (req, res) => {
   const recordingUrl = req.body.RecordingUrl;
+  const callId = req.body.CallSid;
 
   try {
     if (!recordingUrl) throw new Error("No Recording URL found.");
@@ -88,7 +91,7 @@ app.post("/process", async (req, res) => {
       ? transcriptionResult
       : transcriptionResult.text;
 
-    fs.unlink(tempPath, () => {}); // clean up
+    fs.unlink(tempPath, () => {});
 
     const isSilence =
       !userInput ||
@@ -104,10 +107,40 @@ app.post("/process", async (req, res) => {
       return res.send(twiml.toString());
     }
 
+    // 🧠 Initialize session memory
+    sessions[callId] ??= {};
+    const session = sessions[callId];
+
+    const infoPrompt = [
+      {
+        role: "system",
+        content:
+          "You are a helpful assistant that extracts booking info from user input. Reply only with JSON: { service, date, time } if available."
+      },
+      { role: "user", content: userInput }
+    ];
+
+    const infoResponse = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: infoPrompt
+    });
+
+    try {
+      const extracted = JSON.parse(infoResponse.choices[0].message.content);
+      if (extracted.service) session.service = extracted.service;
+      if (extracted.date) session.date = extracted.date;
+      if (extracted.time) session.time = extracted.time;
+    } catch (err) {
+      console.warn("⚠️ Couldn’t parse booking info:", err.message);
+    }
+
     const chatResponse = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [
-        { role: "system", content: salonInfo },
+        {
+          role: "system",
+          content: `${salonInfo}\nCurrent session:\n${JSON.stringify(session)}`
+        },
         { role: "user", content: userInput }
       ]
     });
@@ -123,7 +156,6 @@ app.post("/process", async (req, res) => {
     const isBookingConfirmed = /\b(appointment (has been|is) booked|you(?:'|’)re all set|your appointment is confirmed|confirmation (email|link) sent)/i.test(reply);
 
     if (isBookingPrompt) {
-      // Booking in progress: just record, no follow-up prompt
       twiml.record({
         maxLength: 20,
         action: "/process",
@@ -131,7 +163,7 @@ app.post("/process", async (req, res) => {
         finishOnKey: "#"
       });
     } else if (isBookingConfirmed) {
-      // Booking complete: offer polite follow-up prompt
+      delete sessions[callId]; // clear session on success ✅
       twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
       twiml.record({
         maxLength: 20,
@@ -140,7 +172,6 @@ app.post("/process", async (req, res) => {
         finishOnKey: "#"
       });
     } else {
-      // Regular info response: just record, caller stays in control
       twiml.record({
         maxLength: 20,
         action: "/process",
