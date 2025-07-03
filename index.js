@@ -6,6 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
+const { createBooking } = require("./calendar"); // Make sure this points to your calendar module
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -19,31 +20,27 @@ You are an AI receptionist for Nova Salon.
 
 📍 123 Beauty St, New York, NY
 
-🕐 Hours of Operation:
-- Monday–Wednesday: 10:00 AM – 6:00 PM
-- Thursday–Friday: 10:00 AM – 8:00 PM
-- Saturday: 9:00 AM – 6:00 PM
-- Sunday: 11:00 AM – 4:00 PM
+🕐 Hours:
+Mon–Wed: 10 AM – 6 PM
+Thu–Fri: 10 AM – 8 PM
+Sat: 9 AM – 6 PM
+Sun: 11 AM – 4 PM
 
-💅 Services and Prices:
-- Gel Manicure: $40
-- Acrylic Full Set: $55
-- Basic Pedicure: $35
-- Brow Wax: $15
-- Lash Extensions (Classic): $80
-- Silk Press: $70
-- Box Braids (Medium): $150+
-- Kids Braids (Under 10): $85
+💅 Services:
+Gel Manicure ($40), Acrylic Full Set ($55), Pedicure ($35), Brow Wax ($15),
+Lash Extensions ($80), Silk Press ($70), Box Braids ($150+), Kids Braids ($85)
 
 📋 Policies:
-- Cancel/reschedule at least 24 hours in advance.
-- Late arrivals over 15 mins may need to reschedule.
-- Walk-ins welcome when available.
-- No-shows may be charged a cancellation fee.
+Cancel 24 hrs ahead. Late (>15 mins) may be rescheduled. Walk-ins allowed. No-shows may incur fees.
 
 🛑 Holiday Closures:
-- New Year's Day, Easter Sunday, July 4th, Thanksgiving, Christmas.
+New Year's Day, Easter, July 4th, Thanksgiving, Christmas.
 `;
+
+function isBookingIntent(input) {
+  const bookingKeywords = /book|appointment|schedule|reserve/i;
+  return bookingKeywords.test(input);
+}
 
 app.post("/voice", async (req, res) => {
   const twiml = new twilio.twiml.VoiceResponse();
@@ -65,7 +62,7 @@ app.post("/process", async (req, res) => {
     if (!recordingUrl) throw new Error("No Recording URL found.");
 
     const fullAudioUrl = `${recordingUrl}.mp3`;
-    await new Promise(resolve => setTimeout(resolve, 3000)); // delay for file readiness
+    await new Promise(resolve => setTimeout(resolve, 3000));
 
     const audioResponse = await axios.get(fullAudioUrl, {
       responseType: "arraybuffer",
@@ -84,38 +81,60 @@ app.post("/process", async (req, res) => {
       response_format: "text"
     });
 
-    const userInput = typeof transcriptionResult === "string"
-      ? transcriptionResult
-      : transcriptionResult.text;
-
+    const userInput = typeof transcriptionResult === "string" ? transcriptionResult : transcriptionResult.text;
     fs.unlink(tempPath, err => {
-      if (err) console.warn("⚠️ Error cleaning up temp file:", err.message);
+      if (err) console.warn("⚠️ Temp file cleanup failed:", err.message);
     });
 
-    const isSilence =
-      !userInput ||
-      typeof userInput !== "string" ||
-      userInput.trim().length < 2 ||
-      /^[\s\p{P}]*$/u.test(userInput); // only punctuation or whitespace
-
+    const isSilence = !userInput || userInput.trim().length < 2 || /^[\s\p{P}]*$/u.test(userInput);
     if (isSilence) {
       const twiml = new twilio.twiml.VoiceResponse();
-      twiml.say("I didn’t catch that. Could you please repeat your question after the beep?");
+      twiml.say("I didn’t catch that. Please try again after the beep.");
       twiml.redirect("/voice");
       res.type("text/xml");
       return res.send(twiml.toString());
     }
 
-    const chatResponse = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: salonInfo },
-        { role: "user", content: userInput }
-      ]
-    });
+    let reply = "";
 
-    let reply = chatResponse.choices[0].message.content || "";
-    reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').replace(/\n/g, ' ').trim();
+    if (isBookingIntent(userInput)) {
+      const intentPrompt = [
+        {
+          role: "system",
+          content:
+            "Extract salon booking details as JSON: { service, startTime, endTime, email }. Assume America/New_York timezone. Use best guess if time or email isn't provided."
+        },
+        { role: "user", content: userInput }
+      ];
+
+      const intentResponse = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: intentPrompt
+      });
+
+      let bookingDetails = {};
+
+      try {
+        bookingDetails = JSON.parse(intentResponse.choices[0].message.content);
+        await createBooking(bookingDetails);
+        reply = `You're all set! I’ve booked your ${bookingDetails.service} on ${bookingDetails.startTime}. A confirmation will be emailed to you.`;
+      } catch (bookingErr) {
+        console.error("🛑 Booking error:", bookingErr.message || bookingErr);
+        reply = "I tried to make the booking, but there was a problem. Please try again or speak with our staff directly.";
+      }
+    } else {
+      const chatResponse = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: [
+          { role: "system", content: salonInfo },
+          { role: "user", content: userInput }
+        ]
+      });
+
+      reply = chatResponse.choices[0].message.content || "";
+    }
+
+    reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, "").replace(/\n/g, " ").trim();
 
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say({ voice: "Polly.Joanna" }, reply);
@@ -144,4 +163,3 @@ const port = process.env.PORT || 5000;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
 });
-
