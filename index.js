@@ -88,7 +88,7 @@ app.post("/process", async (req, res) => {
       ? transcriptionResult
       : transcriptionResult.text;
 
-    fs.unlink(tempPath, () => {}); // clean up
+    fs.unlink(tempPath, () => {});
 
     const isSilence =
       !userInput ||
@@ -120,6 +120,8 @@ app.post("/process", async (req, res) => {
     twiml.pause({ length: 1 });
 
     const isExpectingReply = /\b(please (provide|share|tell)|what (date|time|service|name)|may I have|could you tell|when would you like|which service)/i.test(reply);
+    const isBookingSuccess = /\b(appointment (has been|is) booked|you(?:'|’)re all set|your appointment is confirmed|confirmation (email|link) sent)/i.test(reply);
+    const isGeneralAnswer = !isExpectingReply && !isBookingSuccess;
 
     if (isExpectingReply) {
       twiml.record({
@@ -128,7 +130,7 @@ app.post("/process", async (req, res) => {
         transcribe: false,
         finishOnKey: "#"
       });
-    } else {
+    } else if (isBookingSuccess || isGeneralAnswer) {
       twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
       twiml.record({
         maxLength: 20,
