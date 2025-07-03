@@ -88,7 +88,9 @@ app.post("/process", async (req, res) => {
       ? transcriptionResult
       : transcriptionResult.text;
 
-    fs.unlink(tempPath, () => {}); // clean up
+    fs.unlink(tempPath, err => {
+      if (err) console.warn("⚠️ Error cleaning up temp file:", err.message);
+    });
 
     const isSilence =
       !userInput ||
@@ -116,7 +118,16 @@ app.post("/process", async (req, res) => {
     reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, '').replace(/\n/g, ' ').trim();
 
     const twiml = new twilio.twiml.VoiceResponse();
-    twiml.say({ voice: 'Polly.Joanna' }, reply);
+    twiml.say({ voice: "Polly.Joanna" }, reply);
+    twiml.pause({ length: 1 });
+    twiml.say("Would you like to ask another question? If yes, speak after the beep and press pound.");
+    twiml.record({
+      maxLength: 20,
+      action: "/process",
+      transcribe: false,
+      finishOnKey: "#"
+    });
+
     res.type("text/xml");
     res.send(twiml.toString());
 
