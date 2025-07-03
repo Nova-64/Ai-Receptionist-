@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { createBooking } = require("./googlecalendar");
+const { createBooking } = require("./googlecalendar"); // Make sure path is correct
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -20,26 +20,43 @@ You are an AI receptionist for Nova Salon.
 
 📍 123 Beauty St, New York, NY
 
-🕐 Hours:
-Mon–Wed: 10 AM – 6 PM
-Thu–Fri: 10 AM – 8 PM
-Sat: 9 AM – 6 PM
-Sun: 11 AM – 4 PM
+🕐 Hours of Operation:
+- Monday–Wednesday: 10:00 AM – 6:00 PM
+- Thursday–Friday: 10:00 AM – 8:00 PM
+- Saturday: 9:00 AM – 6:00 PM
+- Sunday: 11:00 AM – 4:00 PM
 
-💅 Services:
-Gel Manicure ($40), Acrylic Full Set ($55), Pedicure ($35), Brow Wax ($15),
-Lash Extensions ($80), Silk Press ($70), Box Braids ($150+), Kids Braids ($85)
+💅 Services and Prices:
+- Gel Manicure: $40
+- Acrylic Full Set: $55
+- Basic Pedicure: $35
+- Brow Wax: $15
+- Lash Extensions (Classic): $80
+- Silk Press: $70
+- Box Braids (Medium): $150+
+- Kids Braids (Under 10): $85
 
 📋 Policies:
-Cancel 24 hrs ahead. Late (>15 mins) may be rescheduled. Walk-ins allowed. No-shows may incur fees.
+- Cancel/reschedule at least 24 hours in advance.
+- Late arrivals over 15 mins may need to reschedule.
+- Walk-ins welcome when available.
+- No-shows may be charged a cancellation fee.
 
 🛑 Holiday Closures:
-New Year's Day, Easter, July 4th, Thanksgiving, Christmas.
+- New Year's Day, Easter Sunday, July 4th, Thanksgiving, Christmas.
 `;
 
 function isBookingIntent(input) {
   const bookingKeywords = /book|appointment|schedule|reserve/i;
   return bookingKeywords.test(input);
+}
+
+function isExitIntent(input) {
+  const phrases = [
+    "no thanks", "that's all", "no that’s all", "nothing else", "i’m good",
+    "goodbye", "thanks goodbye", "no i'm good", "thank you", "bye"
+  ];
+  return phrases.some(p => input.toLowerCase().includes(p));
 }
 
 app.post("/voice", async (req, res) => {
@@ -81,7 +98,10 @@ app.post("/process", async (req, res) => {
       response_format: "text"
     });
 
-    const userInput = typeof transcriptionResult === "string" ? transcriptionResult : transcriptionResult.text;
+    const userInput = typeof transcriptionResult === "string"
+      ? transcriptionResult
+      : transcriptionResult.text;
+
     fs.unlink(tempPath, err => {
       if (err) console.warn("⚠️ Temp file cleanup failed:", err.message);
     });
@@ -102,7 +122,7 @@ app.post("/process", async (req, res) => {
         {
           role: "system",
           content:
-            "Extract salon booking details as JSON: { service, startTime, endTime, email }. Assume America/New_York timezone. Use best guess if time or email isn't provided."
+            "Extract salon booking details as JSON: { summary, description, startTime, endTime, email }. Assume America/New_York timezone. Use best guess if time or email isn't provided."
         },
         { role: "user", content: userInput }
       ];
@@ -116,6 +136,11 @@ app.post("/process", async (req, res) => {
 
       try {
         bookingDetails = JSON.parse(intentResponse.choices[0].message.content);
+
+        // Fill fallback summary/description if needed
+        bookingDetails.summary ??= `${bookingDetails.service} Appointment`;
+        bookingDetails.description ??= `Booking for ${bookingDetails.service} at Nova Salon`;
+
         await createBooking(bookingDetails);
         reply = `You're all set! I’ve booked your ${bookingDetails.service} on ${bookingDetails.startTime}. A confirmation will be emailed to you.`;
       } catch (bookingErr) {
@@ -138,14 +163,19 @@ app.post("/process", async (req, res) => {
 
     const twiml = new twilio.twiml.VoiceResponse();
     twiml.say({ voice: "Polly.Joanna" }, reply);
-    twiml.pause({ length: 1 });
-    twiml.say("Would you like to ask another question? If yes, speak after the beep and press pound.");
-    twiml.record({
-      maxLength: 20,
-      action: "/process",
-      transcribe: false,
-      finishOnKey: "#"
-    });
+
+    if (isExitIntent(userInput)) {
+      twiml.say("Thank you for calling Nova Salon. Have a wonderful day!");
+    } else {
+      twiml.pause({ length: 1 });
+      twiml.say("If you'd like to ask something else, speak after the beep and press pound. Otherwise, feel free to hang up.");
+      twiml.record({
+        maxLength: 20,
+        action: "/process",
+        transcribe: false,
+        finishOnKey: "#"
+      });
+    }
 
     res.type("text/xml");
     res.send(twiml.toString());
@@ -163,3 +193,4 @@ const port = process.env.PORT || 5000;
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
 });
+
