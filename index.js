@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { createBooking } = require("./googlecalendar");
+const { createBooking } = require("./googleCalendar");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
