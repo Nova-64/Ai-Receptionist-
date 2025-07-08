@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { createBooking } = require("./googleCalendar");
+const { createBooking } = require("./googleCalendar"); // Adjusted filename
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -114,8 +114,7 @@ app.post("/process", async (req, res) => {
     const infoPrompt = [
       {
         role: "system",
-        content:
-          "Extract booking info in JSON. Format: { service, date, time, email }"
+        content: "Extract booking info from user input. Reply only with valid JSON: { \"service\": \"\", \"date\": \"YYYY-MM-DD\", \"time\": \"HH:MM\", \"email\": \"\" }. Do not explain or add extra text."
       },
       { role: "user", content: userInput }
     ];
@@ -132,7 +131,7 @@ app.post("/process", async (req, res) => {
       if (extracted.time) session.time = extracted.time;
       if (extracted.email) session.email = extracted.email;
     } catch (err) {
-      console.warn("Couldn’t parse booking info:", err.message);
+      console.warn("Couldn’t parse booking info:", infoResponse.choices[0].message.content);
     }
 
     const chatResponse = await openai.chat.completions.create({
@@ -140,7 +139,7 @@ app.post("/process", async (req, res) => {
       messages: [
         {
           role: "system",
-          content: `${salonInfo}\nSession memory:\n${JSON.stringify(session)}`
+          content: `${salonInfo}\nCurrent session:\n${JSON.stringify(session)}`
         },
         { role: "user", content: userInput }
       ]
@@ -151,11 +150,13 @@ app.post("/process", async (req, res) => {
 
     if (session.service && session.date && session.time && session.email) {
       try {
+        const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
         const bookingDetails = {
           service: session.service,
           date: session.date,
           time: session.time,
-          email: session.email
+          email: session.email,
+          accessToken
         };
         const bookingResponse = await createBooking(bookingDetails);
         console.log("Booking confirmed:", bookingResponse.htmlLink);
@@ -163,7 +164,7 @@ app.post("/process", async (req, res) => {
         delete sessions[callId];
       } catch (error) {
         console.error("Booking error:", error.message);
-        reply += " I tried to make the booking, but something went wrong. Please try again later.";
+        reply += " I tried to make the booking, but something went wrong.";
       }
     }
 
@@ -171,18 +172,10 @@ app.post("/process", async (req, res) => {
     twiml.say({ voice: "Polly.Joanna" }, reply);
     twiml.pause({ length: 1 });
 
-    const isBookingPrompt = /\b(please (provide|share|tell)|what (date|time|service|name|email)|may I have|could you tell|when would you like|which service)/i.test(reply);
+    const isBookingPrompt = /\b(please (provide|share|tell)|what (date|time|service|email)|may I have|could you tell|when would you like|which service)/i.test(reply);
     const isBookingConfirmed = /\b(appointment (has been|is) booked|your appointment is confirmed|confirmation email|booked successfully)/i.test(reply);
 
-    if (isBookingPrompt) {
-      twiml.record({
-        maxLength: 20,
-        action: "/process",
-        transcribe: false,
-        finishOnKey: "#"
-      });
-    } else if (isBookingConfirmed) {
-      twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
+    if (isBookingPrompt || !isBookingConfirmed) {
       twiml.record({
         maxLength: 20,
         action: "/process",
@@ -190,6 +183,7 @@ app.post("/process", async (req, res) => {
         finishOnKey: "#"
       });
     } else {
+      twiml.say("If you have another question, please speak after the beep and press pound. Otherwise, feel free to hang up.");
       twiml.record({
         maxLength: 20,
         action: "/process",
@@ -214,3 +208,4 @@ const port = process.env.PORT || 5000;
 app.listen(port, () => {
   console.log("Server running on port", port);
 });
+
