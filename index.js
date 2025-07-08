@@ -6,7 +6,7 @@ const axios = require("axios");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { createBooking } = require("./googleCalendar"); // Adjusted filename
+const { createBooking } = require("./googleCalendar");
 
 const app = express();
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -148,22 +148,27 @@ app.post("/process", async (req, res) => {
     let reply = chatResponse.choices[0].message.content || "";
     reply = reply.replace(/[\u{1F600}-\u{1F6FF}]/gu, "").replace(/\n/g, " ").trim();
 
+    console.log("Current session data:", session);
+
     if (session.service && session.date && session.time && session.email) {
       try {
-        const accessToken = process.env.GOOGLE_ACCESS_TOKEN;
+        const startTime = new Date(`${session.date}T${session.time}:00`);
+        const endTime = new Date(startTime.getTime() + 30 * 60000);
+
         const bookingDetails = {
-          service: session.service,
-          date: session.date,
-          time: session.time,
-          email: session.email,
-          accessToken
+          summary: session.service,
+          description: `Appointment for ${session.service} with ${session.email}`,
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          email: session.email
         };
+
         const bookingResponse = await createBooking(bookingDetails);
-        console.log("Booking confirmed:", bookingResponse.htmlLink);
+        console.log("✅ Booking confirmed:", bookingResponse.htmlLink);
         reply += " Your appointment has been booked successfully.";
         delete sessions[callId];
       } catch (error) {
-        console.error("Booking error:", error.message);
+        console.error("Booking error:", error.response?.data || error.message || error);
         reply += " I tried to make the booking, but something went wrong.";
       }
     }
